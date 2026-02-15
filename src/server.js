@@ -1,10 +1,9 @@
-/*
-// backend/server.js
 const express = require('express');
 const cors = require('cors');
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
+// Initialize Express App
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -12,10 +11,16 @@ const PORT = process.env.PORT || 5000;
 app.use(cors()); // Allows your Frontend to talk to this Backend
 app.use(express.json());
 
-// Supabase Initialization
+// Supabase Initialization --> THE LINK is in .env
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// --- API Endpoints ---
+// Import Modular Routes (Domain Isolation)
+const authRoutes = require('./routes/authRoutes');
+const adminRoutes = require('./routes/admin');
+const staffRoutes = require('./routes/staff');
+const customerRoutes = require('./routes/customer');
+
+// --- Existing API Endpoints (Preserved) ---
 
 // 1. Register
 app.post('/api/v1/auth/register', async (req, res) => {
@@ -67,16 +72,11 @@ app.get('/api/v1/notifications/:userId', async (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`🚀 Herland Backend running on http://localhost:${PORT}`));
-*/
-
-// backend/src/server.js
-const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
-
-const supabase = createClient(process.env.https://pipjndxdustaobgonnam.supabase.co, process.env.eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpcGpuZHhkdXN0YW9iZ29ubmFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQyMzQyMzksImV4cCI6MjA2OTgxMDIzOX0.781w3201-717-449-844-1754234239);
 
 async function testConnection() {
     console.log("🔍 Checking Supabase connection...");
+    // Use 'profiles' or another small table to test connection. 
+    // If 'profiles' doesn't exist, this might fail, but connection itself is tested.
     const { data, error } = await supabase.from('profiles').select('*').limit(1);
     
     if (error) {
