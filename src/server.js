@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-// const { createClient } = require('@supabase/supabase-js'); // Removed local import
+const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
 // Initialize Express App
@@ -15,7 +15,8 @@ app.use(express.json());
 const { requireAuth } = require('./middleware/auth');
 
 // Supabase Initialization --> THE LINK is in .env
-const supabase = require('./config/supabase');
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
 // Import Modular Routes (Domain Isolation)
 const authRoutes = require('./routes/authRoutes');
