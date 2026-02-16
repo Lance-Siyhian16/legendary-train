@@ -1,6 +1,6 @@
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
+// const { createClient } = require('@supabase/supabase-js'); // Removed local import
 require('dotenv').config();
 
 // Initialize Express App
@@ -11,8 +11,11 @@ const PORT = process.env.PORT || 5000;
 app.use(cors()); // Allows your Frontend to talk to this Backend
 app.use(express.json());
 
+// Middleware Imports
+const { requireAuth } = require('./middleware/auth');
+
 // Supabase Initialization --> THE LINK is in .env
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const supabase = require('./config/supabase');
 
 // Import Modular Routes (Domain Isolation)
 const authRoutes = require('./routes/authRoutes');
@@ -43,7 +46,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
 });
 
 // 3. Booking
-app.post('/api/v1/bookings', async (req, res) => {
+app.post('/api/v1/bookings', requireAuth, async (req, res) => {
     const { userId, serviceType, schedule } = req.body;
     const { data, error } = await supabase
         .from('bookings')
@@ -59,7 +62,7 @@ app.post('/api/v1/bookings', async (req, res) => {
 });
 
 // 4. Notifications Fetch
-app.get('/api/v1/notifications/:userId', async (req, res) => {
+app.get('/api/v1/notifications/:userId', requireAuth, async (req, res) => {
     const { userId } = req.params;
     const { data, error } = await supabase
         .from('notifications')
