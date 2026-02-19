@@ -11,6 +11,11 @@ const PORT = process.env.PORT || 5000;
 app.use(cors()); // Allows your Frontend to talk to this Backend
 app.use(express.json());
 
+// Default Route
+app.get('/', (req, res) => {
+    res.send('Welcome to Herland Laundry System API');
+});
+
 // Middleware Imports
 const { requireAuth } = require('./middleware/auth');
 
