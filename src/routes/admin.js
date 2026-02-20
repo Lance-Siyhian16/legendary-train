@@ -36,4 +36,46 @@ router.get('/dashboard-stats', verifyRole('admin'), async (req, res) => {
     }
 });
 
+// Route: Get all users
+router.get('/users', verifyRole('admin'), async (req, res) => {
+    try {
+        const { data: users, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        res.json(users);
+    } catch (error) {
+        console.error('Fetch Users Error:', error.message);
+        res.status(500).json({ error: 'Failed to fetch users' });
+    }
+});
+
+// Route: Update user role
+router.put('/users/:id/role', verifyRole('admin'), async (req, res) => {
+    const { id } = req.params;
+    const { role } = req.body;
+
+    if (!['customer', 'staff', 'admin'].includes(role)) {
+        return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    try {
+        const { data, error } = await supabase
+            .from('profiles')
+            .update({ role })
+            .eq('id', id)
+            .select();
+
+        if (error) throw error;
+
+        res.json({ message: 'User role updated successfully', user: data[0] });
+    } catch (error) {
+        console.error('Update Role Error:', error.message);
+        res.status(500).json({ error: 'Failed to update role' });
+    }
+});
+
 module.exports = router;

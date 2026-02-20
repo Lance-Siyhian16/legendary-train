@@ -29,6 +29,9 @@ const adminRoutes = require('./routes/admin');
 const staffRoutes = require('./routes/staff');
 const customerRoutes = require('./routes/customer');
 
+// Mount Admin Routes
+app.use('/api/v1/admin', adminRoutes);
+
 // --- Existing API Endpoints (Preserved) ---
 
 // 1. Register
