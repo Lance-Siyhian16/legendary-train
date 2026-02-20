@@ -23,7 +23,7 @@ EXPOSE 5000
 CMD ["npm", "run", "dev"]
 
 #To build the image (Do it in the terminal command)
-#docker build -t herland-laundry-system .
+#docker build -t herland-laundry-system-backend .
 
 #To run the image
 #docker run -p 5000:5000 herland-laundry-system
