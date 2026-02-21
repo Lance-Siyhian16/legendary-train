@@ -21,7 +21,7 @@ const { requireAuth } = require('./middleware/auth');
 
 // Supabase Initialization --> THE LINK is in .env
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const supabase = require('./config/supabase');
 
 // Import Modular Routes (Domain Isolation)
 const authRoutes = require('./routes/authRoutes');
@@ -36,13 +36,40 @@ app.use('/api/v1/admin', adminRoutes);
 
 // 1. Register
 app.post('/api/v1/auth/register', async (req, res) => {
-    const { email, password, metadata } = req.body;
+    const { email, phone, password, metadata } = req.body;
+
+    // Convert phone to E.164 format for Supabase auth
+    let e164Phone = phone;
+    if (e164Phone && e164Phone.startsWith('0')) {
+        e164Phone = '+63' + e164Phone.substring(1);
+    }
+
     const { data, error } = await supabase.auth.signUp({
-        email,
+        email: email || undefined,
+        phone: (e164Phone && e164Phone.startsWith('+')) ? e164Phone : undefined,
         password,
         options: { data: metadata }
     });
     if (error) return res.status(400).json({ error: error.message });
+
+    // Save phone number and full name to the profiles table
+    const userId = data.user?.id;
+    if (userId) {
+        const profileUpdate = {};
+        if (metadata?.phone) profileUpdate.phone_number = metadata.phone;
+        if (metadata?.full_name) profileUpdate.full_name = metadata.full_name;
+
+        if (Object.keys(profileUpdate).length > 0) {
+            const { error: profileError } = await supabase
+                .from('profiles')
+                .upsert({ id: userId, ...profileUpdate }, { onConflict: 'id' });
+
+            if (profileError) {
+                console.error('Profile update error:', profileError.message);
+            }
+        }
+    }
+
     res.status(201).json({ message: 'User registered successfully', data });
 });
 

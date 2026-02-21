@@ -25,18 +25,23 @@ const verifyRole = (allowedRole) => {
 
         if (error || !user) return res.status(401).json({ error: 'Unauthorized' });
 
-        // 🔑 The Isolation Step: Check the user's role in your 'profiles' table
-        const { data: profile } = await supabase
+        // Check the user's role in the 'profiles' table
+        const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('role')
             .eq('id', user.id)
             .single();
 
-        if (profile?.role !== allowedRole && profile?.role !== 'Admin') {
+        if (profileError || !profile) {
+            console.error('Profile lookup failed:', profileError?.message);
+            return res.status(403).json({ error: 'Access denied: Could not verify role' });
+        }
+
+        if (profile.role !== allowedRole && profile.role !== 'Admin') {
             return res.status(403).json({ error: 'Access denied: Insufficient permissions' });
         }
 
-        req.user = user; // Pass user info to the next function
+        req.user = user;
         next();
     };
 };

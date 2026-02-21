@@ -1,9 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const { createClient } = require('@supabase/supabase-js');
+const supabase = require('../config/supabase');
 const { verifyRole } = require('../middleware/auth');
-
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Route: Get total revenue and booking counts
 router.get('/dashboard-stats', verifyRole('Admin'), async (req, res) => {
@@ -39,42 +37,117 @@ router.get('/dashboard-stats', verifyRole('Admin'), async (req, res) => {
 // Route: Get all users
 router.get('/users', verifyRole('Admin'), async (req, res) => {
     try {
-        const { data: users, error } = await supabase
+        // Fetch auth users (has email and phone)
+        const { data: { users: authUsers }, error: authError } = await supabase.auth.admin.listUsers();
+        if (authError) throw authError;
+
+        // Fetch profiles (has role, full_name)
+        const { data: profiles, error: profileError } = await supabase
             .from('profiles')
-            .select('*')
-            .order('created_at', { ascending: false });
+            .select('*');
+        if (profileError) throw profileError;
 
-        if (error) throw error;
+        // Merge auth users with their profiles
+        const mergedUsers = authUsers.map(authUser => {
+            const profile = profiles.find(p => p.id === authUser.id) || {};
+            return {
+                id: authUser.id,
+                email: authUser.email || null,
+                phone: authUser.phone || profile.phone_number || null,
+                full_name: profile.full_name || null,
+                role: profile.role || 'Customer',
+                updated_at: profile.updated_at || authUser.created_at,
+                created_at: authUser.created_at,
+            };
+        });
 
-        res.json(users);
+        res.json(mergedUsers);
     } catch (error) {
         console.error('Fetch Users Error:', error.message);
         res.status(500).json({ error: 'Failed to fetch users' });
     }
 });
 
-// Route: Update user role
+// Route: Update user details (role, phone, email, name)
 router.put('/users/:id/role', verifyRole('Admin'), async (req, res) => {
     const { id } = req.params;
-    const { role } = req.body;
+    const { role, phone, email, name } = req.body;
 
-    if (!['Customer', 'Staff', 'Rider', 'Admin'].includes(role)) {
+    if (role && !['Customer', 'Staff', 'Rider', 'Admin'].includes(role)) {
         return res.status(400).json({ error: 'Invalid role' });
     }
 
     try {
-        const { data, error } = await supabase
-            .from('profiles')
-            .update({ role })
-            .eq('id', id)
-            .select();
+        // Update profile fields (role, phone_number, full_name)
+        const profileUpdate = {};
+        if (role) profileUpdate.role = role;
+        if (phone !== undefined) profileUpdate.phone_number = phone;
+        if (name !== undefined) profileUpdate.full_name = name;
 
-        if (error) throw error;
+        if (Object.keys(profileUpdate).length > 0) {
+            const { error } = await supabase
+                .from('profiles')
+                .update(profileUpdate)
+                .eq('id', id);
 
-        res.json({ message: 'User role updated successfully', user: data[0] });
+            if (error) throw error;
+        }
+
+        // Update auth user phone/email if provided
+        if (phone !== undefined || email !== undefined) {
+            const authUpdate = {};
+
+            // Convert phone to E.164 format for Supabase auth
+            if (phone !== undefined && phone) {
+                let e164Phone = phone;
+                // Philippine format: 09xx -> +639xx
+                if (e164Phone.startsWith('0')) {
+                    e164Phone = '+63' + e164Phone.substring(1);
+                }
+                // Only update auth if phone is in E.164 format
+                if (e164Phone.startsWith('+')) {
+                    authUpdate.phone = e164Phone;
+                }
+            }
+
+            if (email !== undefined) authUpdate.email = email;
+
+            if (Object.keys(authUpdate).length > 0) {
+                const { error: authError } = await supabase.auth.admin.updateUserById(id, authUpdate);
+                if (authError) console.error('Auth update warning:', authError.message);
+            }
+        }
+
+        res.json({ message: 'User updated successfully' });
     } catch (error) {
-        console.error('Update Role Error:', error.message);
-        res.status(500).json({ error: 'Failed to update role' });
+        console.error('Update User Error:', error.message);
+        res.status(500).json({ error: 'Failed to update user' });
+    }
+});
+
+// Route: Delete user
+router.delete('/users/:id', verifyRole('Admin'), async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        // Delete profile first
+        const { error: profileError } = await supabase
+            .from('profiles')
+            .delete()
+            .eq('id', id);
+
+        if (profileError) {
+            console.error('Profile delete warning:', profileError.message);
+        }
+
+        // Delete from auth.users
+        const { error: authError } = await supabase.auth.admin.deleteUser(id);
+        if (authError) throw authError;
+
+        res.json({ message: 'User deleted successfully' });
+    } catch (error) {
+        console.error('Delete User Error:', error.message);
+        res.status(500).json({ error: 'Failed to delete user' });
     }
 });
 
