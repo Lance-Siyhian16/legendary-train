@@ -58,7 +58,8 @@ export default function Carousel({ slides = [], interval = 3000 }) {
       ? 0
       : currentIndex - 1;
 
-  const currentSlide = slides[realIndex];
+  const safeIndex = Math.max(0, Math.min(realIndex, slides.length - 1));
+  const currentSlide = slides[safeIndex] || slides[0];
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl h-36 sm:h-40 md:h-52">
