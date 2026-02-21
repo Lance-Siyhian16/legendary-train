@@ -32,7 +32,7 @@ const verifyRole = (allowedRole) => {
             .eq('id', user.id)
             .single();
 
-        if (profile?.role !== allowedRole && profile?.role !== 'admin') {
+        if (profile?.role !== allowedRole && profile?.role !== 'Admin') {
             return res.status(403).json({ error: 'Access denied: Insufficient permissions' });
         }
 

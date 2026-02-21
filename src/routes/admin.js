@@ -6,7 +6,7 @@ const { verifyRole } = require('../middleware/auth');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Route: Get total revenue and booking counts
-router.get('/dashboard-stats', verifyRole('admin'), async (req, res) => {
+router.get('/dashboard-stats', verifyRole('Admin'), async (req, res) => {
     try {
         // 1. Fetch all bookings that are 'delivered' (completed)
         const { data: bookings, error } = await supabase
@@ -37,7 +37,7 @@ router.get('/dashboard-stats', verifyRole('admin'), async (req, res) => {
 });
 
 // Route: Get all users
-router.get('/users', verifyRole('admin'), async (req, res) => {
+router.get('/users', verifyRole('Admin'), async (req, res) => {
     try {
         const { data: users, error } = await supabase
             .from('profiles')
@@ -54,11 +54,11 @@ router.get('/users', verifyRole('admin'), async (req, res) => {
 });
 
 // Route: Update user role
-router.put('/users/:id/role', verifyRole('admin'), async (req, res) => {
+router.put('/users/:id/role', verifyRole('Admin'), async (req, res) => {
     const { id } = req.params;
     const { role } = req.body;
 
-    if (!['customer', 'staff', 'admin'].includes(role)) {
+    if (!['Customer', 'Staff', 'Rider', 'Admin'].includes(role)) {
         return res.status(400).json({ error: 'Invalid role' });
     }
 
