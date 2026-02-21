@@ -1,9 +1,22 @@
-import { useState, useMemo, useEffect } from "react";
+/**
+ * ManageBookings.jsx
+ *
+ * Admin dashboard component for managing laundry service bookings.
+ * Supports viewing, filtering, sorting, and searching bookings by status
+ * or customer. Admins can advance bookings through a multi-stage workflow
+ * (received → payment → preparation → shipping → final → done), set payment
+ * amounts, and track progress via a timeline stepper. All booking data is
+ * fetched from and persisted to the Supabase backend through REST API calls.
+ */
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate } from 'react-router-dom';
 import BottomNavbar from '../../shared/navigation/BottomNavbar';
 import { STATUS_ORDER, getStatusKey, getStatusMeta } from '../../shared/components/StatusMeta';
 import { FilterSelect, RadioRow } from '../../shared/components/OptionInput';
 import VerticalStepper from '../../shared/components/VerticalStepper';
+import { supabase } from '../../lib/supabase';
+
+const API_BASE = 'http://localhost:5000/api/v1/admin';
 
 const SHIPPING_ACTION_BY_OPTION = {
   dropOffPickUpLater: "Mark Ready for Pickup",
@@ -190,6 +203,46 @@ export default function ManageBookings() {
   const [searchQuery, setSearchQuery] = useState("");
   const [amountDrafts, setAmountDrafts] = useState({});
   const [amountError, setAmountError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState("");
+
+  // Fetch bookings from the database via backend API
+  const fetchBookings = useCallback(async () => {
+    try {
+      setLoading(true);
+      setFetchError("");
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      const response = await fetch(`${API_BASE}/bookings`, {
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.length > 0) {
+          setBookings(data);
+        }
+        // If API returns empty, keep initialBookings as fallback
+      } else {
+        console.error('Failed to fetch bookings from backend');
+        setFetchError('Could not load bookings from the server. Showing local data.');
+        // Keep initialBookings as fallback
+      }
+    } catch (error) {
+      console.error('Error fetching bookings:', error);
+      setFetchError('Could not connect to the server. Showing local data.');
+      // Keep initialBookings as fallback
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBookings();
+  }, [fetchBookings]);
 
   const selectedBooking = useMemo(
     () => bookings.find((booking) => booking.id === expandedId) || null,
@@ -214,7 +267,7 @@ export default function ManageBookings() {
 
   const toggleExpand = (id) => setExpandedId(expandedId === id ? null : id);
 
-  const applyAction = (bookingId, actionLabel) => {
+  const applyAction = async (bookingId, actionLabel) => {
     const effect = ACTION_EFFECTS[actionLabel];
     if (!effect) return;
 
@@ -223,14 +276,17 @@ export default function ManageBookings() {
       if (!canConfirmPaymentForBooking(targetBooking)) return;
     }
 
+    // Build the updated timeline for the API call
+    const currentBooking = bookings.find((booking) => booking.id === bookingId);
+    const updatedTimeline = [
+      ...(currentBooking?.timeline || []),
+      { status: effect.status, timestamp: new Date().toISOString() },
+    ];
+
+    // Update local state immediately for responsive UI
     setBookings((prev) =>
       prev.map((booking) => {
         if (booking.id !== bookingId) return booking;
-
-        const updatedTimeline = [
-          ...booking.timeline,
-          { status: effect.status, timestamp: new Date().toISOString() },
-        ];
 
         const nextPaymentDetails = booking.paymentDetails
           ? {
@@ -252,9 +308,31 @@ export default function ManageBookings() {
         };
       })
     );
+
+    // Persist to database via backend
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const dbId = currentBooking?.dbId || bookingId;
+
+      await fetch(`${API_BASE}/bookings/${dbId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          status: effect.status,
+          nextStage: effect.nextStage,
+          timeline: updatedTimeline,
+        }),
+      });
+    } catch (error) {
+      console.error('Failed to persist status update:', error);
+    }
   };
 
-  const saveAmountToPay = (bookingId) => {
+  const saveAmountToPay = async (bookingId) => {
     const targetBooking = bookings.find((booking) => booking.id === bookingId);
     const paymentStatus = targetBooking?.paymentDetails?.status;
     const isPaymentConfirmed = typeof paymentStatus === "string" && paymentStatus.toLowerCase().includes("payment confirmed");
@@ -274,6 +352,7 @@ export default function ManageBookings() {
 
     setAmountError("");
 
+    // Update local state immediately
     setBookings((prev) =>
       prev.map((booking) => {
         if (booking.id !== bookingId) return booking;
@@ -287,6 +366,23 @@ export default function ManageBookings() {
       })
     );
 
+    // Persist to database via backend
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const dbId = targetBooking?.dbId || bookingId;
+
+      await fetch(`${API_BASE}/bookings/${dbId}/amount`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ amountToPay: parsedAmount }),
+      });
+    } catch (error) {
+      console.error('Failed to persist amount update:', error);
+    }
   };
 
   // Filter bookings based on selected status
@@ -385,7 +481,9 @@ export default function ManageBookings() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {filteredBookings.length === 0 && (
+          {loading && <p className="text-gray-500 col-span-full">Loading bookings...</p>}
+          {fetchError && <p className="text-amber-600 text-sm col-span-full">{fetchError}</p>}
+          {!loading && filteredBookings.length === 0 && (
             <p className="text-gray-500 col-span-full">No bookings found for this status.</p>
           )}
 
