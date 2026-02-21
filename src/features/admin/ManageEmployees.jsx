@@ -123,7 +123,12 @@ import { supabase } from '../../lib/supabase';
                 'Content-Type': 'application/json',
                 ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             },
-            body: JSON.stringify({ role: editData.role })
+            body: JSON.stringify({
+                role: editData.role,
+                phone: editData.phone,
+                email: editData.email,
+                name: editData.name,
+            })
         });
 
         if (response.ok) {
@@ -149,9 +154,29 @@ import { supabase } from '../../lib/supabase';
     setEditData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleDelete = (id) => {
-    setEmployee((prev) => prev.filter((s) => s.id !== id));
-    if (expandedId === id) setExpandedId(null);
+  const handleDelete = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this employee? This action cannot be undone.')) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const response = await fetch(`http://localhost:5000/api/v1/admin/users/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (response.ok) {
+        setEmployee((prev) => prev.filter((s) => s.id !== id));
+        if (expandedId === id) setExpandedId(null);
+      } else {
+        alert('Failed to delete employee.');
+      }
+    } catch (error) {
+      console.error('Error deleting employee:', error);
+      alert('An error occurred while deleting.');
+    }
   };
 
   return (

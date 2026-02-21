@@ -50,7 +50,7 @@ export default function ManageUsers() {
         const mappedUsers = data.map(user => ({
           ...user,
           name: user.full_name || user.name || 'Unknown',
-          dateJoined: user.created_at || new Date().toISOString(),
+          dateJoined: user.updated_at || new Date().toISOString(),
           // Ensure other fields are present
         })).filter(u => u.role === 'Customer' || !u.role); // Only show customers
 
@@ -129,15 +129,22 @@ export default function ManageUsers() {
                 'Content-Type': 'application/json',
                 ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             },
-            body: JSON.stringify({ role: editData.role })
+            body: JSON.stringify({
+                role: editData.role,
+                phone: editData.phone,
+                name: editData.name,
+            })
         });
 
         if (response.ok) {
-            setCustomers((prev) => prev.map((c) => (c.id === editingId ? { ...c, ...editData } : c)));
+            // If role changed to non-customer, remove from this list
+            if (editData.role && editData.role !== 'Customer') {
+                setCustomers((prev) => prev.filter((c) => c.id !== editingId));
+            } else {
+                setCustomers((prev) => prev.map((c) => (c.id === editingId ? { ...c, ...editData } : c)));
+            }
             setEditingId(null);
             setEditData({});
-            // Optionally re-fetch to be sure
-            // fetchUsers();
         } else {
             console.error('Failed to update role');
             // Handle error (e.g., show notification)
@@ -158,10 +165,29 @@ export default function ManageUsers() {
     setShowPasswords((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleDelete = (id) => {
-    // Implement delete API if needed, for now just local state
-    setCustomers((prev) => prev.filter((c) => c.id !== id));
-    if (expandedId === id) setExpandedId(null);
+  const handleDelete = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this user? This action cannot be undone.')) return;
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const response = await fetch(`http://localhost:5000/api/v1/admin/users/${id}`, {
+        method: 'DELETE',
+        headers: {
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+      });
+
+      if (response.ok) {
+        setCustomers((prev) => prev.filter((c) => c.id !== id));
+        if (expandedId === id) setExpandedId(null);
+      } else {
+        alert('Failed to delete user.');
+      }
+    } catch (error) {
+      console.error('Error deleting user:', error);
+      alert('An error occurred while deleting.');
+    }
   };
 
   return (

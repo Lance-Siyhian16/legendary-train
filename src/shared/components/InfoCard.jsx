@@ -59,12 +59,13 @@ export default function InfoCard({
                   />
                   <select
                     name="role"
-                    value={editData?.role || 'staff'}
+                    value={editData?.role || 'Staff'}
                     onChange={onInputChange}
                     className="border border-gray-300 rounded px-2 py-1 text-sm outline-none focus:border-[#3878c2]"
                   >
-                    <option value="staff">Staff</option>
-                    <option value="rider">Rider</option>
+                    <option value="Staff">Staff</option>
+                    <option value="Rider">Rider</option>
+                    <option value="Customer">Customer (move to Users)</option>
                   </select>
                   <input
                     name="phone"
@@ -140,9 +141,9 @@ export default function InfoCard({
                         <label className="flex items-center gap-2 cursor-pointer mt-1">
                           <input
                             type="checkbox"
-                            checked={editData?.role === 'staff'}
+                            checked={editData?.role === 'Staff'}
                             onChange={(e) => {
-                              const newRole = e.target.checked ? 'staff' : 'customer';
+                              const newRole = e.target.checked ? 'Staff' : 'Customer';
                               onInputChange({ target: { name: 'role', value: newRole } });
                             }}
                             className="w-4 h-4 text-[#3878c2] border-gray-300 rounded focus:ring-[#3878c2]"
