@@ -295,4 +295,314 @@ router.put('/bookings/:id/amount', verifyRole('Admin'), async (req, res) => {
     }
 });
 
+// ─── Services Management Routes ─────────────────────────────────────────────────
+
+// Route: Get all services, add-ons, and schedule
+router.get('/services', verifyRole('Admin'), async (req, res) => {
+    try {
+        // Fetch service items (services + add-ons)
+        const { data: items, error: itemsError } = await supabase
+            .from('service_items')
+            .select('*')
+            .order('sort_order', { ascending: true });
+
+        if (itemsError) throw itemsError;
+
+        // Fetch schedule
+        const { data: scheduleRows, error: schedError } = await supabase
+            .from('shop_schedule')
+            .select('*')
+            .limit(1);
+
+        if (schedError) throw schedError;
+
+        const services = (items || [])
+            .filter(i => i.type === 'service')
+            .map(i => ({
+                id: i.id,
+                name: i.name,
+                currentPrice: Number(i.current_price),
+                previousPrice: i.previous_price != null ? Number(i.previous_price) : null,
+            }));
+
+        const addOns = (items || [])
+            .filter(i => i.type === 'addon')
+            .map(i => ({
+                id: i.id,
+                name: i.name,
+                currentPrice: Number(i.current_price),
+                previousPrice: i.previous_price != null ? Number(i.previous_price) : null,
+            }));
+
+        const schedule = scheduleRows && scheduleRows.length > 0
+            ? {
+                opens: scheduleRows[0].opens,
+                closes: scheduleRows[0].closes,
+                previousOpens: scheduleRows[0].previous_opens || null,
+                previousCloses: scheduleRows[0].previous_closes || null,
+            }
+            : null;
+
+        res.json({ services, addOns, schedule });
+    } catch (error) {
+        console.error('Fetch Services Error:', error.message);
+        res.status(500).json({ error: 'Failed to fetch services' });
+    }
+});
+
+// Route: Add a new service or add-on
+router.post('/services/items', verifyRole('Admin'), async (req, res) => {
+    const { type, name, currentPrice } = req.body;
+
+    if (!type || !name || currentPrice === undefined) {
+        return res.status(400).json({ error: 'type, name, and currentPrice are required' });
+    }
+    if (!['service', 'addon'].includes(type)) {
+        return res.status(400).json({ error: 'type must be "service" or "addon"' });
+    }
+
+    try {
+        // Get max sort_order for ordering
+        const { data: existing } = await supabase
+            .from('service_items')
+            .select('sort_order')
+            .eq('type', type)
+            .order('sort_order', { ascending: false })
+            .limit(1);
+
+        const nextOrder = (existing && existing.length > 0 ? existing[0].sort_order : 0) + 1;
+
+        const { data, error } = await supabase
+            .from('service_items')
+            .insert({
+                type,
+                name: name.trim(),
+                current_price: Number(currentPrice),
+                previous_price: null,
+                sort_order: nextOrder,
+            })
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        res.json({
+            id: data.id,
+            name: data.name,
+            currentPrice: Number(data.current_price),
+            previousPrice: null,
+        });
+    } catch (error) {
+        console.error('Add Service Item Error:', error.message);
+        res.status(500).json({ error: 'Failed to add item' });
+    }
+});
+
+// Route: Update a service or add-on price
+router.put('/services/items/:id', verifyRole('Admin'), async (req, res) => {
+    const { id } = req.params;
+    const { currentPrice, previousPrice } = req.body;
+
+    if (currentPrice === undefined) {
+        return res.status(400).json({ error: 'currentPrice is required' });
+    }
+
+    try {
+        const updateData = {
+            current_price: Number(currentPrice),
+        };
+        if (previousPrice !== undefined) {
+            updateData.previous_price = previousPrice !== null ? Number(previousPrice) : null;
+        }
+
+        const { error } = await supabase
+            .from('service_items')
+            .update(updateData)
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({ message: 'Item updated successfully' });
+    } catch (error) {
+        console.error('Update Service Item Error:', error.message);
+        res.status(500).json({ error: 'Failed to update item' });
+    }
+});
+
+// Route: Delete a service or add-on
+router.delete('/services/items/:id', verifyRole('Admin'), async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('service_items')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({ message: 'Item deleted successfully' });
+    } catch (error) {
+        console.error('Delete Service Item Error:', error.message);
+        res.status(500).json({ error: 'Failed to delete item' });
+    }
+});
+
+// Route: Update shop schedule
+router.put('/services/schedule', verifyRole('Admin'), async (req, res) => {
+    const { opens, closes, previousOpens, previousCloses } = req.body;
+
+    if (!opens || !closes) {
+        return res.status(400).json({ error: 'opens and closes are required' });
+    }
+
+    try {
+        // Upsert: check if a schedule row exists
+        const { data: existing } = await supabase
+            .from('shop_schedule')
+            .select('id')
+            .limit(1);
+
+        if (existing && existing.length > 0) {
+            const updateData = { opens, closes, updated_at: new Date().toISOString() };
+            if (previousOpens !== undefined) updateData.previous_opens = previousOpens;
+            if (previousCloses !== undefined) updateData.previous_closes = previousCloses;
+
+            const { error } = await supabase
+                .from('shop_schedule')
+                .update(updateData)
+                .eq('id', existing[0].id);
+
+            if (error) throw error;
+        } else {
+            const { error } = await supabase
+                .from('shop_schedule')
+                .insert({
+                    opens,
+                    closes,
+                    previous_opens: previousOpens || null,
+                    previous_closes: previousCloses || null,
+                });
+
+            if (error) throw error;
+        }
+
+        res.json({ message: 'Schedule updated successfully' });
+    } catch (error) {
+        console.error('Update Schedule Error:', error.message);
+        res.status(500).json({ error: 'Failed to update schedule' });
+    }
+});
+
+// Route: Get all FAQs
+router.get('/services/faqs', verifyRole('Admin'), async (req, res) => {
+    try {
+        const { data: faqs, error } = await supabase
+            .from('faqs')
+            .select('*')
+            .order('sort_order', { ascending: true });
+
+        if (error) throw error;
+
+        const mapped = (faqs || []).map(f => ({
+            id: f.id,
+            question: f.question,
+            answer: f.answer,
+            sortOrder: f.sort_order,
+        }));
+
+        res.json(mapped);
+    } catch (error) {
+        console.error('Fetch FAQs Error:', error.message);
+        res.status(500).json({ error: 'Failed to fetch FAQs' });
+    }
+});
+
+// Route: Add or update a FAQ
+router.post('/services/faqs', verifyRole('Admin'), async (req, res) => {
+    const { id, question, answer } = req.body;
+
+    if (!question || !answer) {
+        return res.status(400).json({ error: 'question and answer are required' });
+    }
+
+    try {
+        if (id) {
+            // Update existing
+            const { error } = await supabase
+                .from('faqs')
+                .update({ question: question.trim(), answer: answer.trim() })
+                .eq('id', id);
+
+            if (error) throw error;
+            res.json({ message: 'FAQ updated successfully' });
+        } else {
+            // Add new
+            const { data: existing } = await supabase
+                .from('faqs')
+                .select('sort_order')
+                .order('sort_order', { ascending: false })
+                .limit(1);
+
+            const nextOrder = (existing && existing.length > 0 ? existing[0].sort_order : 0) + 1;
+
+            const { data, error } = await supabase
+                .from('faqs')
+                .insert({
+                    question: question.trim(),
+                    answer: answer.trim(),
+                    sort_order: nextOrder,
+                })
+                .select()
+                .single();
+
+            if (error) throw error;
+            res.json({ id: data.id, question: data.question, answer: data.answer });
+        }
+    } catch (error) {
+        console.error('Save FAQ Error:', error.message);
+        res.status(500).json({ error: 'Failed to save FAQ' });
+    }
+});
+
+// Route: Reorder FAQs
+router.put('/services/faqs/reorder', verifyRole('Admin'), async (req, res) => {
+    const { orderedIds } = req.body;
+
+    if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+        return res.status(400).json({ error: 'orderedIds array is required' });
+    }
+
+    try {
+        const updates = orderedIds.map((id, index) =>
+            supabase.from('faqs').update({ sort_order: index }).eq('id', id)
+        );
+
+        await Promise.all(updates);
+        res.json({ message: 'FAQs reordered successfully' });
+    } catch (error) {
+        console.error('Reorder FAQs Error:', error.message);
+        res.status(500).json({ error: 'Failed to reorder FAQs' });
+    }
+});
+
+// Route: Delete a FAQ
+router.delete('/services/faqs/:id', verifyRole('Admin'), async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        const { error } = await supabase
+            .from('faqs')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+
+        res.json({ message: 'FAQ deleted successfully' });
+    } catch (error) {
+        console.error('Delete FAQ Error:', error.message);
+        res.status(500).json({ error: 'Failed to delete FAQ' });
+    }
+});
+
 module.exports = router;
