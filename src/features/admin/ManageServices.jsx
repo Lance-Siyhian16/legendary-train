@@ -1,32 +1,88 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BottomNavbar from '../../shared/navigation/BottomNavbar';
 import { defaultFaqs } from '../../shared/constants/faqs';
+import { supabase } from '../../lib/supabase';
 
-const initialServices = [
+const API_BASE = 'http://localhost:5000/api/v1/admin';
+
+const fallbackServices = [
   { id: 'wash', name: 'Wash', currentPrice: 60.0, previousPrice: null },
   { id: 'dry', name: 'Dry', currentPrice: 65.0, previousPrice: null },
   { id: 'fold', name: 'Fold', currentPrice: 30.0, previousPrice: null },
 ];
 
-const initialAddOns = [
+const fallbackAddOns = [
   { id: 'detergent', name: 'Detergent', currentPrice: 24.0, previousPrice: null },
   { id: 'fabric-conditioner', name: 'Fabric Conditioner', currentPrice: 20.0, previousPrice: null },
 ];
 
-const initialSchedule = {
+const fallbackSchedule = {
   opens: '10:00',
   closes: '22:00',
 };
 
+// Helper: get auth headers for API requests
+const getAuthHeaders = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
+};
+
 export default function ManageServices() {
   const navigate = useNavigate();
-  const [services, setServices] = useState(initialServices);
-  const [addOns, setAddOns] = useState(initialAddOns);
-  const [schedule, setSchedule] = useState(initialSchedule);
+  const [services, setServices] = useState(fallbackServices);
+  const [addOns, setAddOns] = useState(fallbackAddOns);
+  const [schedule, setSchedule] = useState(fallbackSchedule);
   const [previousSchedule, setPreviousSchedule] = useState(null);
   const [history, setHistory] = useState([]);
   const [faqs, setFaqs] = useState(defaultFaqs);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
+
+  // Fetch services, add-ons, schedule from backend
+  const fetchServices = useCallback(async () => {
+    try {
+      setLoading(true);
+      setFetchError('');
+      const authHeaders = await getAuthHeaders();
+
+      // Fetch services + add-ons + schedule
+      const servicesRes = await fetch(`${API_BASE}/services`, { headers: authHeaders });
+      if (servicesRes.ok) {
+        const data = await servicesRes.json();
+        if (data.services && data.services.length > 0) setServices(data.services);
+        if (data.addOns && data.addOns.length > 0) setAddOns(data.addOns);
+        if (data.schedule) {
+          setSchedule({ opens: data.schedule.opens, closes: data.schedule.closes });
+          if (data.schedule.previousOpens || data.schedule.previousCloses) {
+            setPreviousSchedule({
+              opens: data.schedule.previousOpens || data.schedule.opens,
+              closes: data.schedule.previousCloses || data.schedule.closes,
+            });
+          }
+        }
+      } else {
+        setFetchError('Could not load services from server. Showing local data.');
+      }
+
+      // Fetch FAQs
+      const faqsRes = await fetch(`${API_BASE}/services/faqs`, { headers: authHeaders });
+      if (faqsRes.ok) {
+        const faqData = await faqsRes.json();
+        if (faqData.length > 0) setFaqs(faqData);
+      }
+    } catch (error) {
+      console.error('Error fetching services:', error);
+      setFetchError('Could not connect to server. Showing local data.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchServices();
+  }, [fetchServices]);
   const [faqDraft, setFaqDraft] = useState({ question: '', answer: '' });
   const [editingFaqId, setEditingFaqId] = useState(null);
   const [selectedTermsFile, setSelectedTermsFile] = useState(null);
@@ -55,7 +111,7 @@ export default function ManageServices() {
     setShowConfirmModal(true);
   };
 
-  const handleFinalSave = () => {
+  const handleFinalSave = async () => {
     const timestamp = new Date();
     const formattedDate = timestamp.toLocaleDateString('en-US', {
       month: 'short',
@@ -77,10 +133,12 @@ export default function ManageServices() {
 
       const setCollection = editType === 'service' ? setServices : setAddOns;
       const label = editType === 'service' ? 'Service' : 'Add-On';
+      let oldPrice = null;
 
       setCollection((prev) =>
         prev.map((s) => {
           if (s.id === editItem.id) {
+            oldPrice = s.currentPrice;
             if (s.currentPrice !== updatedPrice) {
               const newLog = {
                 id: Date.now(),
@@ -95,6 +153,18 @@ export default function ManageServices() {
           return s;
         })
       );
+
+      // Persist to backend
+      try {
+        const authHeaders = await getAuthHeaders();
+        await fetch(`${API_BASE}/services/items/${editItem.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ currentPrice: updatedPrice, previousPrice: oldPrice }),
+        });
+      } catch (error) {
+        console.error('Failed to persist price update:', error);
+      }
     } else {
       if (schedule.opens !== editItem.opens || schedule.closes !== editItem.closes) {
         const newLog = {
@@ -106,14 +176,32 @@ export default function ManageServices() {
         setHistory((prev) => [newLog, ...prev]);
         setPreviousSchedule({ ...schedule });
       }
+      const prevSchedule = { ...schedule };
       setSchedule({ ...editItem });
+
+      // Persist schedule to backend
+      try {
+        const authHeaders = await getAuthHeaders();
+        await fetch(`${API_BASE}/services/schedule`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({
+            opens: editItem.opens,
+            closes: editItem.closes,
+            previousOpens: prevSchedule.opens,
+            previousCloses: prevSchedule.closes,
+          }),
+        });
+      } catch (error) {
+        console.error('Failed to persist schedule update:', error);
+      }
     }
     setShowConfirmModal(false);
     setShowSuccessModal(true);
     setTimeout(() => setShowSuccessModal(false), 2000);
   };
 
-  const handleRevert = (type, item = null) => {
+  const handleRevert = async (type, item = null) => {
     const timestamp = new Date();
     const formattedDate = timestamp.toLocaleDateString('en-US', {
       month: 'short',
@@ -154,6 +242,18 @@ export default function ManageServices() {
           return s;
         })
       );
+
+      // Persist revert to backend
+      try {
+        const authHeaders = await getAuthHeaders();
+        await fetch(`${API_BASE}/services/items/${item.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ currentPrice: item.previousPrice, previousPrice: item.currentPrice }),
+        });
+      } catch (error) {
+        console.error('Failed to persist revert:', error);
+      }
     } else if (type === 'schedule') {
       if (!previousSchedule) return;
 
@@ -165,8 +265,26 @@ export default function ManageServices() {
       };
       setHistory((prev) => [newLog, ...prev]);
 
+      const oldSchedule = { ...schedule };
       setSchedule({ ...previousSchedule });
       setPreviousSchedule({ ...schedule });
+
+      // Persist schedule revert to backend
+      try {
+        const authHeaders = await getAuthHeaders();
+        await fetch(`${API_BASE}/services/schedule`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({
+            opens: previousSchedule.opens,
+            closes: previousSchedule.closes,
+            previousOpens: oldSchedule.opens,
+            previousCloses: oldSchedule.closes,
+          }),
+        });
+      } catch (error) {
+        console.error('Failed to persist schedule revert:', error);
+      }
     }
     setShowSuccessModal(true);
     setTimeout(() => setShowSuccessModal(false), 1500);
@@ -181,7 +299,7 @@ export default function ManageServices() {
     setAddOnDraft((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handleAddItem = (type) => {
+  const handleAddItem = async (type) => {
     const draft = type === 'service' ? serviceDraft : addOnDraft;
     const setCollection = type === 'service' ? setServices : setAddOns;
     const setDraft = type === 'service' ? setServiceDraft : setAddOnDraft;
@@ -203,10 +321,27 @@ export default function ManageServices() {
       hour12: true,
     });
 
+    // Persist to backend first to get real ID
+    let newId = `${type}-${Date.now()}`;
+    try {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`${API_BASE}/services/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({ type, name, currentPrice: price }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        if (data.id) newId = data.id;
+      }
+    } catch (error) {
+      console.error('Failed to persist new item:', error);
+    }
+
     setCollection((prev) => [
       ...prev,
       {
-        id: `${type}-${Date.now()}`,
+        id: newId,
         name,
         currentPrice: price,
         previousPrice: null,
@@ -233,7 +368,7 @@ export default function ManageServices() {
     setShowDeleteConfirmModal(true);
   };
 
-  const handleFinalDelete = () => {
+  const handleFinalDelete = async () => {
     if (!pendingDelete) return;
 
     const { type, item } = pendingDelete;
@@ -263,6 +398,17 @@ export default function ManageServices() {
       ...prev,
     ]);
 
+    // Persist deletion to backend
+    try {
+      const authHeaders = await getAuthHeaders();
+      await fetch(`${API_BASE}/services/items/${item.id}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+    } catch (error) {
+      console.error('Failed to persist deletion:', error);
+    }
+
     setShowDeleteConfirmModal(false);
     setPendingDelete(null);
     setShowSuccessModal(true);
@@ -278,33 +424,63 @@ export default function ManageServices() {
     setEditingFaqId(null);
   };
 
-  const handleSaveFaq = () => {
+  const handleSaveFaq = async () => {
     const question = faqDraft.question.trim();
     const answer = faqDraft.answer.trim();
 
     if (!question || !answer) return;
 
-    if (editingFaqId) {
-      setFaqs((prev) =>
-        prev.map((faq) =>
-          faq.id === editingFaqId
-            ? {
-                ...faq,
-                question,
-                answer,
-              }
-            : faq
-        )
-      );
-    } else {
-      setFaqs((prev) => [
-        ...prev,
-        {
-          id: `faq-${Date.now()}`,
+    try {
+      const authHeaders = await getAuthHeaders();
+      const response = await fetch(`${API_BASE}/services/faqs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
+        body: JSON.stringify({
+          id: editingFaqId || undefined,
           question,
           answer,
-        },
-      ]);
+        }),
+      });
+
+      if (editingFaqId) {
+        setFaqs((prev) =>
+          prev.map((faq) =>
+            faq.id === editingFaqId
+              ? {
+                  ...faq,
+                  question,
+                  answer,
+                }
+              : faq
+          )
+        );
+      } else {
+        let newId = `faq-${Date.now()}`;
+        if (response.ok) {
+          const data = await response.json();
+          if (data.id) newId = data.id;
+        }
+        setFaqs((prev) => [
+          ...prev,
+          {
+            id: newId,
+            question,
+            answer,
+          },
+        ]);
+      }
+    } catch (error) {
+      console.error('Failed to persist FAQ:', error);
+      // Still update local state as fallback
+      if (editingFaqId) {
+        setFaqs((prev) =>
+          prev.map((faq) =>
+            faq.id === editingFaqId ? { ...faq, question, answer } : faq
+          )
+        );
+      } else {
+        setFaqs((prev) => [...prev, { id: `faq-${Date.now()}`, question, answer }]);
+      }
     }
 
     resetFaqForm();
@@ -315,10 +491,21 @@ export default function ManageServices() {
     setFaqDraft({ question: faq.question, answer: faq.answer });
   };
 
-  const handleDeleteFaq = (faqId) => {
+  const handleDeleteFaq = async (faqId) => {
     setFaqs((prev) => prev.filter((faq) => faq.id !== faqId));
     if (editingFaqId === faqId) {
       resetFaqForm();
+    }
+
+    // Persist FAQ deletion to backend
+    try {
+      const authHeaders = await getAuthHeaders();
+      await fetch(`${API_BASE}/services/faqs/${faqId}`, {
+        method: 'DELETE',
+        headers: authHeaders,
+      });
+    } catch (error) {
+      console.error('Failed to persist FAQ deletion:', error);
     }
   };
 
@@ -333,6 +520,17 @@ export default function ManageServices() {
       const reordered = [...prev];
       const [movedItem] = reordered.splice(index, 1);
       reordered.splice(targetIndex, 0, movedItem);
+
+      // Persist reorder to backend
+      const orderedIds = reordered.map((faq) => faq.id);
+      getAuthHeaders().then((authHeaders) => {
+        fetch(`${API_BASE}/services/faqs/reorder`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', ...authHeaders },
+          body: JSON.stringify({ orderedIds }),
+        }).catch((err) => console.error('Failed to persist FAQ reorder:', err));
+      });
+
       return reordered;
     });
   };
@@ -364,6 +562,8 @@ export default function ManageServices() {
   return (
     <div className="min-h-screen bg-white px-4 py-6 sm:py-10">
       <main className="mx-auto w-full max-w-2xl pb-24 md:max-w-5xl lg:max-w-6xl">
+        {loading && <p className="text-gray-500 mb-4">Loading services...</p>}
+        {fetchError && <p className="text-amber-600 text-sm mb-4">{fetchError}</p>}
         <header className="mb-6 flex items-center gap-2 text-[#3878c2]">
           <button
             type="button"
