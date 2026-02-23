@@ -1,155 +1,126 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
+import { supabase } from '../../lib/supabase';
 
-function readAmountToPayFromStorage(bookingReference) {
-	if (!bookingReference) return null;
-
-	try {
-		const raw = localStorage.getItem('hlBookings');
-		if (!raw) return null;
-		const parsed = JSON.parse(raw);
-		if (!Array.isArray(parsed)) return null;
-
-		const matchedBooking = parsed.find((booking) => booking.id === bookingReference);
-		const storedAmount = matchedBooking?.paymentDetails?.amountToPay;
-
-		if (typeof storedAmount === 'number') return storedAmount;
-		if (typeof storedAmount === 'string' && storedAmount.trim() !== '') {
-			const converted = Number(storedAmount);
-			return Number.isNaN(converted) ? null : converted;
-		}
-
-		return null;
-	} catch {
-		return null;
-	}
-}
-
-function readPaymentReferenceFromStorage(bookingReference) {
-	if (!bookingReference) return '';
-
-	try {
-		const raw = localStorage.getItem('hlBookings');
-		if (!raw) return '';
-		const parsed = JSON.parse(raw);
-		if (!Array.isArray(parsed)) return '';
-
-		const matchedBooking = parsed.find((booking) => booking.id === bookingReference);
-		const storedReference = matchedBooking?.paymentDetails?.referenceNumber;
-
-		if (storedReference === undefined || storedReference === null) return '';
-		if (storedReference === '-') return '';
-		return String(storedReference);
-	} catch {
-		return '';
-	}
-}
-
-function savePaymentReferenceToStorage(bookingReference, referenceNumber) {
-	if (!bookingReference) return false;
-
-	try {
-		const raw = localStorage.getItem('hlBookings');
-		if (!raw) return false;
-		const parsed = JSON.parse(raw);
-		if (!Array.isArray(parsed)) return false;
-
-		let hasMatch = false;
-		const normalizedReference = referenceNumber.trim();
-
-		const updated = parsed.map((booking) => {
-			if (booking.id !== bookingReference) return booking;
-			hasMatch = true;
-
-			return {
-				...booking,
-				paymentDetails: {
-					...(booking.paymentDetails || {}),
-					referenceNumber: normalizedReference,
-				},
-			};
-		});
-
-		if (!hasMatch) return false;
-
-		localStorage.setItem('hlBookings', JSON.stringify(updated));
-		return true;
-	} catch {
-		return false;
-	}
-}
+const API_BASE = 'http://localhost:5000/api/v1/customer';
 
 export default function PaymentForm() {
 	const location = useLocation();
 	const bookingReference = location.state?.bookingReference || '';
 	const amountToPayFromState = location.state?.amountToPay;
-	const paymentReference = location.state?.paymentReference || '';
-	const [referenceNumber, setReferenceNumber] = useState(
-		paymentReference || readPaymentReferenceFromStorage(bookingReference)
-	);
+	const paymentReferenceFromState = location.state?.paymentReference || '';
+
+	const [referenceNumber, setReferenceNumber] = useState(paymentReferenceFromState);
+	const [amountToPay, setAmountToPay] = useState(amountToPayFromState || 0);
+	const [loading, setLoading] = useState(false);
+	const [submitting, setSubmitting] = useState(false);
 	const [submitted, setSubmitted] = useState(false);
-	const [amountToPay, setAmountToPay] = useState(() => {
-		if (typeof amountToPayFromState === 'number') return amountToPayFromState;
-		return readAmountToPayFromStorage(bookingReference);
-	});
+	const [error, setError] = useState('');
 
-	useEffect(() => {
-		if (typeof amountToPayFromState === 'number') {
-			setAmountToPay(amountToPayFromState);
-			return;
-		}
-
-		setAmountToPay(readAmountToPayFromStorage(bookingReference));
-	}, [amountToPayFromState, bookingReference]);
-
-	useEffect(() => {
+	const fetchBookingDetails = useCallback(async () => {
 		if (!bookingReference) return;
 
-		const intervalId = setInterval(() => {
-			setAmountToPay(readAmountToPayFromStorage(bookingReference));
-		}, 5000);
+		try {
+			const { data: { session } } = await supabase.auth.getSession();
+			const token = session?.access_token;
 
-		return () => clearInterval(intervalId);
-	}, [bookingReference]);
+			if (!token) return;
+
+			const response = await fetch(`${API_BASE}/my-bookings/${encodeURIComponent(bookingReference)}`, {
+				headers: {
+					Authorization: `Bearer ${token}`,
+				},
+			});
+
+			if (response.ok) {
+				const data = await response.json();
+				// Update local state if backend has more recent data
+				if (data.paymentDetails) {
+					if (typeof data.paymentDetails.amountToPay === 'number') {
+						setAmountToPay(data.paymentDetails.amountToPay);
+					}
+					if (data.paymentDetails.referenceNumber && data.paymentDetails.referenceNumber !== '-' && !referenceNumber) {
+						setReferenceNumber(data.paymentDetails.referenceNumber);
+					}
+				}
+                setError('');
+			} else if (response.status === 404) {
+                setError(`Booking ${bookingReference} not found. Please verify the reference number.`);
+            } else {
+                setError('Failed to load booking details.');
+            }
+		} catch (err) {
+			console.error('Error fetching booking details:', err);
+            setError('Could not connect to the server.');
+		}
+	}, [bookingReference, referenceNumber]);
 
 	useEffect(() => {
-		if (!bookingReference) return;
-		if (paymentReference) return;
-
-		const storedReference = readPaymentReferenceFromStorage(bookingReference);
-		if (storedReference) {
-			setReferenceNumber(storedReference);
-		}
-	}, [bookingReference, paymentReference]);
+		fetchBookingDetails();
+		// Polling for amount updates every 10 seconds
+		const interval = setInterval(fetchBookingDetails, 10000);
+		return () => clearInterval(interval);
+	}, [fetchBookingDetails]);
 
 	const isValidReference = useMemo(
 		() => /^[A-Za-z0-9-]{6,30}$/.test(referenceNumber.trim()),
 		[referenceNumber]
 	);
 
-	const canSubmit = isValidReference;
+	const canSubmit = isValidReference && !submitting;
 
 	const formattedAmount =
-		typeof amountToPay === 'number'
+		typeof amountToPay === 'number' && amountToPay > 0
 			? `₱${amountToPay.toLocaleString('en-PH', {
 					minimumFractionDigits: 2,
 					maximumFractionDigits: 2,
 			  })}`
 			: null;
 
-	const handleSubmit = (event) => {
+	const handleSubmit = async (event) => {
 		event.preventDefault();
 		if (!canSubmit) return;
 
-		savePaymentReferenceToStorage(bookingReference, referenceNumber);
-		setReferenceNumber(referenceNumber.trim());
-		setSubmitted(true);
+		setSubmitting(true);
+		setError('');
+
+		try {
+			const { data: { session } } = await supabase.auth.getSession();
+			const token = session?.access_token;
+
+			const response = await fetch(`${API_BASE}/my-bookings/${encodeURIComponent(bookingReference)}/payment-reference`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${token}`,
+				},
+				body: JSON.stringify({ referenceNumber: referenceNumber.trim() }),
+			});
+
+			if (response.ok) {
+				setSubmitted(true);
+			} else {
+				const data = await response.json();
+				setError(data.error || 'Failed to update payment reference');
+			}
+		} catch (err) {
+			console.error('Error updating payment reference:', err);
+			setError('Could not connect to the server. Please try again.');
+		} finally {
+			setSubmitting(false);
+		}
 	};
 
 	return (
 		<div className="min-h-[calc(100vh-9rem)] bg-white px-4 py-6 md:px-6">
 			<div className="mx-auto w-full max-w-2xl rounded-xl border border-[#e6eef8] bg-white p-5 text-[#3878c2] shadow-sm md:p-6">
 				<h1 className="text-xl font-semibold">Payment Submission</h1>
+
+				{error && (
+					<div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">
+						{error}
+					</div>
+				)}
 
 				<div className="mt-4 rounded-lg border border-[#d9e8fb] bg-[#f9fcff] p-4">
 					<div className="grid gap-3 md:grid-cols-2">
@@ -186,8 +157,9 @@ export default function PaymentForm() {
 								setSubmitted(false);
 								setReferenceNumber(event.target.value);
 							}}
+							disabled={submitting}
 							placeholder="Enter your GCash reference number"
-							className="w-full rounded border border-[#3878c2] px-3 py-2 text-sm font-semibold text-[#3878c2] placeholder-[#b4b4b4] outline-none"
+							className="w-full rounded border border-[#3878c2] px-3 py-2 text-sm font-semibold text-[#3878c2] placeholder-[#b4b4b4] outline-none disabled:opacity-50"
 						/>
 						{referenceNumber && !isValidReference ? (
 							<p className="mt-1 text-xs text-[#e55353]">
@@ -213,7 +185,7 @@ export default function PaymentForm() {
 								: 'cursor-not-allowed bg-[#b4b4b4]'
 						}`}
 					>
-						Submit GCash Reference
+						{submitting ? 'Submitting...' : 'Submit GCash Reference'}
 					</button>
 				</form>
 

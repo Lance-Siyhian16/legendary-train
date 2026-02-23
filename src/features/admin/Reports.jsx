@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   BarChart,
@@ -17,8 +17,9 @@ import {
 } from 'recharts';
 import BottomNavbar from '../../shared/navigation/BottomNavbar';
 import { FilterSelect } from '../../shared/components/OptionInput';
+import { supabase } from '../../lib/supabase';
 
-const STORAGE_KEY = 'hlBookings';
+const API_BASE = 'http://localhost:5000/api/v1/admin';
 const CHART_COLORS = ['#3878c2', '#63bce6', '#4bad40', '#f59e0b', '#ef4444', '#8b5cf6'];
 const CHART_TYPE_LABELS = {
   bar: 'Bar Graph',
@@ -48,12 +49,10 @@ const DUMMY_BOOKINGS = [
     createdAt: '2026-01-03T09:30:00.000Z',
     collectionOption: 'dropOffPickUpLater',
     optionLabel: 'Drop-off & Pick up later',
-    services: { wash: 1, dry: 1, fold: 0 },
-    addons: { detergent: 1, conditioner: 1 },
-    paymentMethod: 'cash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '09:00' },
-    deliveryInfo: { time: '15:00' },
+    serviceDetails: { services: { wash: 1, dry: 1, fold: 0 }, addons: { detergent: 1, conditioner: 1 } },
+    paymentDetails: { method: 'Cash' },
+    status: 'delivered',
+    collectionDetails: { collectionTime: '09:00', deliveryTime: '15:00' },
     timeline: [{ status: 'Booking Received', timestamp: '2026-01-03T09:30:00.000Z' }],
   },
   {
@@ -61,12 +60,10 @@ const DUMMY_BOOKINGS = [
     createdAt: '2026-01-05T11:15:00.000Z',
     collectionOption: 'dropOffDelivered',
     optionLabel: 'Drop-off & Delivered',
-    services: { wash: 1, dry: 0, fold: 1 },
-    addons: { detergent: 2, conditioner: 0 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '11:00' },
-    deliveryInfo: { time: '16:00' },
+    serviceDetails: { services: { wash: 1, dry: 0, fold: 1 }, addons: { detergent: 2, conditioner: 0 } },
+    paymentDetails: { method: 'GCash' },
+    status: 'delivered',
+    collectionDetails: { collectionTime: '11:00', deliveryTime: '16:00' },
     timeline: [{ status: 'Booking Received', timestamp: '2026-01-05T11:15:00.000Z' }],
   },
   {
@@ -74,142 +71,13 @@ const DUMMY_BOOKINGS = [
     createdAt: '2026-01-08T13:45:00.000Z',
     collectionOption: 'pickedUpDelivered',
     optionLabel: 'Picked up & Delivered',
-    services: { wash: 1, dry: 1, fold: 1 },
-    addons: { detergent: 1, conditioner: 2 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'failure',
-    collectionInfo: { time: '13:00' },
-    deliveryInfo: { time: '17:00' },
+    serviceDetails: { services: { wash: 1, dry: 1, fold: 1 }, addons: { detergent: 1, conditioner: 2 } },
+    paymentDetails: { method: 'GCash' },
+    status: 'cancelled',
+    collectionDetails: { collectionTime: '13:00', deliveryTime: '17:00' },
     timeline: [{ status: 'Booking Failed', timestamp: '2026-01-08T13:45:00.000Z' }],
   },
-  {
-    id: 'HL-250114-1004',
-    createdAt: '2026-01-14T10:10:00.000Z',
-    collectionOption: 'dropOffDelivered',
-    optionLabel: 'Drop-off & Delivered',
-    services: { wash: 1, dry: 1, fold: 0 },
-    addons: { detergent: 0, conditioner: 1 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '10:00' },
-    deliveryInfo: { time: '14:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-01-14T10:10:00.000Z' }],
-  },
-  {
-    id: 'HL-250120-1005',
-    createdAt: '2026-01-20T15:05:00.000Z',
-    collectionOption: 'dropOffPickUpLater',
-    optionLabel: 'Drop-off & Pick up later',
-    services: { wash: 0, dry: 1, fold: 1 },
-    addons: { detergent: 1, conditioner: 0 },
-    paymentMethod: 'cash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '15:00' },
-    deliveryInfo: { time: '10:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-01-20T15:05:00.000Z' }],
-  },
-  {
-    id: 'HL-250129-1006',
-    createdAt: '2026-01-29T16:40:00.000Z',
-    collectionOption: 'pickedUpDelivered',
-    optionLabel: 'Picked up & Delivered',
-    services: { wash: 1, dry: 0, fold: 0 },
-    addons: { detergent: 0, conditioner: 2 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'failure',
-    collectionInfo: { time: '16:00' },
-    deliveryInfo: { time: '12:00' },
-    timeline: [{ status: 'Booking Cancelled', timestamp: '2026-01-29T16:40:00.000Z' }],
-  },
-  {
-    id: 'HL-250202-1007',
-    createdAt: '2026-02-02T09:50:00.000Z',
-    collectionOption: 'dropOffDelivered',
-    optionLabel: 'Drop-off & Delivered',
-    services: { wash: 1, dry: 1, fold: 1 },
-    addons: { detergent: 2, conditioner: 1 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '09:00' },
-    deliveryInfo: { time: '13:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-02-02T09:50:00.000Z' }],
-  },
-  {
-    id: 'HL-250206-1008',
-    createdAt: '2026-02-06T12:30:00.000Z',
-    collectionOption: 'dropOffPickUpLater',
-    optionLabel: 'Drop-off & Pick up later',
-    services: { wash: 0, dry: 1, fold: 1 },
-    addons: { detergent: 1, conditioner: 1 },
-    paymentMethod: 'cash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '12:00' },
-    deliveryInfo: { time: '16:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-02-06T12:30:00.000Z' }],
-  },
-  {
-    id: 'HL-250211-1009',
-    createdAt: '2026-02-11T14:20:00.000Z',
-    collectionOption: 'pickedUpDelivered',
-    optionLabel: 'Picked up & Delivered',
-    services: { wash: 1, dry: 1, fold: 0 },
-    addons: { detergent: 0, conditioner: 1 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '14:00' },
-    deliveryInfo: { time: '18:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-02-11T14:20:00.000Z' }],
-  },
-  {
-    id: 'HL-250215-1010',
-    createdAt: '2026-02-15T10:40:00.000Z',
-    collectionOption: 'dropOffDelivered',
-    optionLabel: 'Drop-off & Delivered',
-    services: { wash: 1, dry: 0, fold: 1 },
-    addons: { detergent: 2, conditioner: 2 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'failure',
-    collectionInfo: { time: '10:00' },
-    deliveryInfo: { time: '15:00' },
-    timeline: [{ status: 'Payment Flagged', timestamp: '2026-02-15T10:40:00.000Z' }],
-  },
-  {
-    id: 'HL-250217-1011',
-    createdAt: '2026-02-17T11:55:00.000Z',
-    collectionOption: 'dropOffPickUpLater',
-    optionLabel: 'Drop-off & Pick up later',
-    services: { wash: 1, dry: 1, fold: 1 },
-    addons: { detergent: 1, conditioner: 0 },
-    paymentMethod: 'cash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '11:00' },
-    deliveryInfo: { time: '14:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-02-17T11:55:00.000Z' }],
-  },
-  {
-    id: 'HL-250219-1012',
-    createdAt: '2026-02-19T16:10:00.000Z',
-    collectionOption: 'pickedUpDelivered',
-    optionLabel: 'Picked up & Delivered',
-    services: { wash: 1, dry: 0, fold: 0 },
-    addons: { detergent: 0, conditioner: 1 },
-    paymentMethod: 'gcash',
-    bookingStatus: 'success',
-    collectionInfo: { time: '16:00' },
-    deliveryInfo: { time: '12:00' },
-    timeline: [{ status: 'Booking Received', timestamp: '2026-02-19T16:10:00.000Z' }],
-  },
 ];
-
-function parseStoredBookings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = JSON.parse(raw || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
 
 function toSafeDate(input) {
   if (!input) return null;
@@ -237,7 +105,7 @@ function normalizeCount(value) {
 }
 
 function getServiceCounts(booking) {
-  const services = booking.services || {};
+  const services = (booking.serviceDetails?.services) || (booking.services) || {};
   return {
     wash: normalizeCount(services.wash),
     dry: normalizeCount(services.dry),
@@ -246,7 +114,7 @@ function getServiceCounts(booking) {
 }
 
 function getAddonCounts(booking) {
-  const addons = booking.addons || {};
+  const addons = (booking.serviceDetails?.addons) || (booking.addons) || {};
   return {
     detergent: normalizeCount(addons.detergent) * 2,
     conditioner: normalizeCount(addons.conditioner) * 2,
@@ -254,22 +122,21 @@ function getAddonCounts(booking) {
 }
 
 function getPaymentMode(booking) {
-  const method = String(booking.paymentMethod || '').toLowerCase();
+  const method = String(booking.paymentDetails?.method || booking.paymentMethod || '').toLowerCase();
   if (method === 'gcash') return 'GCash';
   if (method === 'cash') return 'Cash';
   return 'Unknown';
 }
 
 function getOutcome(booking) {
-  if (booking.bookingStatus) {
-    return String(booking.bookingStatus).toLowerCase() === 'success' ? 'Success' : 'Failure';
-  }
-
+  const status = String(booking.status || booking.bookingStatus || '').toLowerCase();
+  if (status === 'delivered' || status === 'success') return 'Success';
+  
   const timelineText = Array.isArray(booking.timeline)
     ? booking.timeline.map((entry) => String(entry.status || '').toLowerCase()).join(' ')
     : '';
 
-  if (timelineText.includes('cancel') || timelineText.includes('fail') || timelineText.includes('flagged')) {
+  if (timelineText.includes('cancel') || timelineText.includes('fail') || timelineText.includes('flagged') || status === 'cancelled' || status === 'failure') {
     return 'Failure';
   }
 
@@ -363,10 +230,49 @@ export default function Reports() {
   const [selectedReport, setSelectedReport] = useState('bookingVolume');
   const [chartView, setChartView] = useState('bar');
   const [timeframe, setTimeframe] = useState('monthly');
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const storedBookings = useMemo(() => parseStoredBookings(), []);
-  const isUsingDummyData = storedBookings.length === 0;
-  const bookings = isUsingDummyData ? DUMMY_BOOKINGS : storedBookings;
+  const fetchBookings = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError('');
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      
+      if (!token) {
+        setError('Unauthorized: Admin access required');
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/bookings`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setBookings(data);
+      } else {
+        setError('Failed to fetch reports data from server.');
+      }
+    } catch (err) {
+      console.error('Error fetching reports data:', err);
+      setError('Could not connect to the server.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBookings();
+  }, [fetchBookings]);
+
+  const isUsingDummyData = !loading && bookings.length === 0 && !error;
+  const displayBookings = isUsingDummyData ? DUMMY_BOOKINGS : bookings;
 
   const computed = useMemo(() => {
     const volumeMap = {};
@@ -388,7 +294,7 @@ export default function Reports() {
     };
     const outcomeMap = { Success: 0, Failure: 0 };
 
-    bookings.forEach((booking) => {
+    displayBookings.forEach((booking) => {
       const createdAt = getBookingCreatedAt(booking);
       if (createdAt) {
         const key =
@@ -418,8 +324,8 @@ export default function Reports() {
         'Unknown';
       collectionMap[optionLabel] = (collectionMap[optionLabel] || 0) + 1;
 
-      const collectionTimeBucket = bucketTime(booking.collectionInfo?.time || booking.collectionTime);
-      const deliveryTimeBucket = bucketTime(booking.deliveryInfo?.time || booking.deliveryTime);
+      const collectionTimeBucket = bucketTime(booking.collectionDetails?.collectionTime || booking.collectionInfo?.time || booking.collectionTime);
+      const deliveryTimeBucket = bucketTime(booking.collectionDetails?.deliveryTime || booking.deliveryInfo?.time || booking.deliveryTime);
       if (collectionTimeBucket) peakWindowsMap[collectionTimeBucket] += 1;
       if (deliveryTimeBucket) peakWindowsMap[deliveryTimeBucket] += 1;
 
@@ -431,8 +337,8 @@ export default function Reports() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, value]) => ({ name, value }));
 
-    if (!bookingVolume.length && bookings.length > 0) {
-      bookingVolume = [{ name: 'Total Bookings', value: bookings.length }];
+    if (!bookingVolume.length && displayBookings.length > 0) {
+      bookingVolume = [{ name: 'Total Bookings', value: displayBookings.length }];
     }
 
     return {
@@ -444,7 +350,7 @@ export default function Reports() {
       preferredTime: buildDistributionData(peakWindowsMap),
       successFailure: buildDistributionData(outcomeMap),
     };
-  }, [bookings, timeframe]);
+  }, [displayBookings, timeframe]);
 
   const selectedConfig = REPORTS.find((report) => report.key === selectedReport) || REPORTS[0];
 
@@ -476,9 +382,15 @@ export default function Reports() {
               ? 'border-[#f59e0b] bg-[#fff7ed] text-[#b45309]'
               : 'border-[#3878c2] bg-[#eff6ff] text-[#3878c2]'
           }`}>
-            Source: {isUsingDummyData ? `demo seed (${bookings.length} bookings)` : `localStorage (${bookings.length} bookings)`}
+            Source: {loading ? 'Loading...' : isUsingDummyData ? `demo seed (${displayBookings.length} bookings)` : `API (${bookings.length} bookings)`}
           </span>
         </header>
+
+        {error && (
+          <div className="mb-6 rounded-xl bg-red-50 p-4 text-sm text-red-600">
+            {error}
+          </div>
+        )}
 
         <div className="mb-5 grid gap-3 md:grid-cols-3">
           <div className="rounded-2xl border border-[#3878c2] bg-white p-4 shadow-sm">
@@ -497,6 +409,7 @@ export default function Reports() {
               options={REPORTS.map((report) => ({
                 value: report.key,
                 label: report.label,
+                disabled: false
               }))}
               className="w-full rounded-lg border border-[#3878c3] px-3 py-2 text-sm text-[#3878c3] focus:border-[#3878c2] focus:outline-none"
             />
@@ -539,7 +452,14 @@ export default function Reports() {
         </div>
 
         <div className="mb-2 text-sm font-semibold text-[#3878c2]">{selectedConfig.label}</div>
-        <ReportChart view={safeChartView} data={selectedData} />
+        
+        {loading ? (
+          <div className="h-80 w-full rounded-2xl bg-[#ffffff] p-6 flex items-center justify-center text-[#3878c2]">
+            <p className="text-base font-semibold">Loading data...</p>
+          </div>
+        ) : (
+          <ReportChart view={safeChartView} data={selectedData} />
+        )}
 
         <p className="mt-4 rounded-xl bg-white px-4 py-3 text-xs text-[#374151]">
           Some reports require richer booking fields (services, addons, payment method, collection/delivery times, booking status).

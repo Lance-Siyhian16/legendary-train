@@ -1,22 +1,102 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { ACTIVE_STATUSES, PAST_STATUSES, getStatusMeta } from "../../../shared/components/StatusMeta";
+import { ACTIVE_STATUSES, PAST_STATUSES, getStatusMeta, getStatusKey } from "../../../shared/components/StatusMeta";
+import { supabase } from "../../../lib/supabase";
 
-const BOOKINGS = [
-  { id: "HL-906735-6662", status: "InProgress", route: "Picked up & Delivered", from: { type: "Picked up", address: "Herland Laundry" }, to: { type: "Delivered", address: "Herland Laundry" }, date: "Feb 2, 2026" },
-  { id: "HL-906735-6662", status: "ReadyForPickup", route: "Drop-off & Pick up later", from: { type: "Drop-off", address: "Herland Laundry" }, to: { type: "Pick up later", address: "Herland Laundry" }, date: "Jan 28, 2026" },
-  { id: "HL-906735-6662", status: "BookingCompleted", route: "Drop-off & Delivered", from: { type: "Drop-off", address: "Herland Laundry" }, to: { type: "Delivered", address: "Herland Laundry" }, date: "Jan 19, 2026" },
-  { id: "HL-906735-6662", status: "BookingCancelled", route: "Picked up & Delivered", from: { type: "Picked up", address: "Herland Laundry" }, to: { type: "Delivered", address: "Herland Laundry" }, date: "Jan 6, 2026" },
-];
+const API_BASE = "http://localhost:5000/api/v1/customer";
 
 const FILTERS = ["All", "Active", "Past"];
 
+const COLLECTION_LABELS = {
+  dropOffPickUpLater: "Drop-off & Pick up later",
+  dropOffDelivered: "Drop-off & Delivered",
+  pickedUpDelivered: "Picked up & Delivered",
+};
+
+const ROUTE_INFO = {
+  dropOffPickUpLater: {
+    from: { type: "Drop-off", address: "Herland Laundry" },
+    to: { type: "Pick up later", address: "Herland Laundry" },
+  },
+  dropOffDelivered: {
+    from: { type: "Drop-off", address: "Herland Laundry" },
+    to: { type: "Delivered", address: "Customer address" },
+  },
+  pickedUpDelivered: {
+    from: { type: "Picked up", address: "Customer address" },
+    to: { type: "Delivered", address: "Customer address" },
+  },
+};
+
+function mapBookingToCard(booking) {
+  const option = booking.collectionOption || "dropOffPickUpLater";
+  const routeInfo = ROUTE_INFO[option] || ROUTE_INFO.dropOffPickUpLater;
+  const routeLabel = COLLECTION_LABELS[option] || "Drop-off & Pick up later";
+
+  // Derive the status key from the latest timeline entry
+  const latestStatus =
+    booking.timeline && booking.timeline.length > 0
+      ? booking.timeline[booking.timeline.length - 1].status
+      : "Booking Received";
+
+  return {
+    id: booking.id,
+    dbId: booking.dbId,
+    status: getStatusKey(latestStatus),
+    route: routeLabel,
+    from: routeInfo.from,
+    to: routeInfo.to,
+    date: booking.date || "-",
+  };
+}
+
 export default function BookingHistory() {
   const [selectedFilter, setSelectedFilter] = useState("All");
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const navigate = useNavigate();
 
+  const fetchBookings = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
+      if (!token) {
+        setError("Please log in to view your bookings.");
+        setLoading(false);
+        return;
+      }
+
+      const response = await fetch(`${API_BASE}/my-bookings`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setBookings(data.map(mapBookingToCard));
+      } else {
+        console.error("Failed to fetch bookings");
+        setError("Could not load bookings.");
+      }
+    } catch (err) {
+      console.error("Error fetching bookings:", err);
+      setError("Could not connect to the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchBookings();
+  }, [fetchBookings]);
+
   // Filter bookings based on selected filter
-  const filteredBookings = BOOKINGS.filter((booking) => {
+  const filteredBookings = bookings.filter((booking) => {
     if (selectedFilter === "All") return true;
     if (selectedFilter === "Active") return ACTIVE_STATUSES.includes(booking.status);
     if (selectedFilter === "Past") return PAST_STATUSES.includes(booking.status);
@@ -61,7 +141,15 @@ export default function BookingHistory() {
           </div>
         </header>
 
-        {filteredBookings.length === 0 ? (
+        {loading ? (
+          <div className="flex min-h-[60vh] items-center justify-center">
+            <p className="text-lg text-[#b4b4b4]">Loading bookings...</p>
+          </div>
+        ) : error ? (
+          <div className="flex min-h-[60vh] flex-col items-center justify-center text-center space-y-6">
+            <p className="text-lg text-[#e55353]">{error}</p>
+          </div>
+        ) : filteredBookings.length === 0 ? (
           <div className="flex min-h-[60vh] flex-col items-center justify-center text-center space-y-6">
             <img
               src="/images/WashingMachine.png"
@@ -74,11 +162,11 @@ export default function BookingHistory() {
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {filteredBookings.map((booking) => {
+            {filteredBookings.map((booking, index) => {
               const statusMeta = getStatusMeta(booking.status);
               return (
                 <button
-                  key={booking.id + booking.status + booking.date} // ensure unique key
+                  key={`${booking.id}-${index}`}
                   type="button"
                   onClick={() => navigate(`/bookings/${encodeURIComponent(booking.id)}`)}
                   className="relative w-full rounded-2xl border border-[#3878c2] bg-white text-left shadow-sm overflow-hidden transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-[#63bce6]/60"

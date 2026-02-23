@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLayout } from "../../app/LayoutContext";
 import { usePermissions } from "../../shared/permissions/UsePermissions";
 import DateTimePicker from "../../shared/components/DateTimePicker";
+import { supabase } from "../../lib/supabase";
 
 /* =========================
    Parent Component
@@ -853,84 +854,6 @@ function StepReview({
     };
   };
 
-  const saveBookingToLocalStorage = (reference, paymentReference) => {
-    try {
-      const storageKey = "hlBookings";
-      const nowIso = new Date().toISOString();
-      const existing = JSON.parse(localStorage.getItem(storageKey) || "[]");
-
-      const selectedServices = Object.entries(services)
-        .filter(([, isSelected]) => Boolean(isSelected))
-        .map(([serviceName]) => serviceName);
-
-      const selectedAddons = Object.entries(addons)
-        .filter(([, quantity]) => Number(quantity) > 0)
-        .map(([addonName, quantity]) => ({ name: addonName, quantity }));
-
-      const routeAddresses = getRouteAddresses(collectionInfo.option);
-
-      const booking = {
-        id: reference,
-        customerName: "Customer",
-        date: formatBookingDate(nowIso),
-        collectionOption: collectionInfo.option || "dropOffPickUpLater",
-        optionLabel: collectionInfo.optionLabel || "Drop-off & Pick up later",
-        stage: "received",
-        timeline: [{ status: "Booking Received", timestamp: nowIso }],
-        serviceDetails: {
-          services,
-          selectedServices,
-          addons,
-          selectedAddons,
-          weight,
-        },
-        collectionDetails: {
-          option: collectionInfo.option || "dropOffPickUpLater",
-          optionLabel: collectionInfo.optionLabel || "Drop-off & Pick up later",
-          collectionDate: collectionInfo.date || "",
-          collectionTime: collectionInfo.time || "",
-          deliveryDate: deliveryInfo.date || "",
-          deliveryTime: deliveryInfo.time || "",
-          pickupAddress: routeAddresses.pickupAddress,
-          deliveryAddress: routeAddresses.deliveryAddress,
-        },
-        notes,
-        paymentDetails: {
-          method: paymentMethod === "gcash" ? "GCash" : "Cash",
-          referenceNumber: paymentMethod === "gcash" ? "" : "-",
-          status: paymentMethod === "gcash" ? "For confirmation" : "Pay on collection",
-        },
-      };
-
-      localStorage.setItem(storageKey, JSON.stringify([booking, ...existing]));
-    } catch {
-    }
-  };
-
-  const getAmountToPayFromStorage = (reference) => {
-    if (!reference) return null;
-
-    try {
-      const raw = localStorage.getItem("hlBookings");
-      if (!raw) return null;
-
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return null;
-
-      const matchedBooking = parsed.find((booking) => booking.id === reference);
-      const amount = matchedBooking?.paymentDetails?.amountToPay;
-
-      if (typeof amount === "number") return amount;
-      if (typeof amount === "string" && amount.trim() !== "") {
-        const parsedAmount = Number(amount);
-        return Number.isNaN(parsedAmount) ? null : parsedAmount;
-      }
-
-      return null;
-    } catch {
-      return null;
-    }
-  };
 
   // Helper to format Add-Ons quantities
   const formatAddonQuantity = (key, value) => {
@@ -1067,16 +990,82 @@ function StepReview({
           Back
         </button>
         <button
-          onClick={() => {
-            const isSuccess = Math.random() >= 0.5;
-            const nextReference = isSuccess ? generateReferenceNumber() : "";
+          onClick={async () => {
+            const nextReference = generateReferenceNumber();
             const nextPaymentReference = "";
-            setBookingStatus(isSuccess ? "success" : "error");
-            setReferenceNumber(nextReference);
-            setPaymentReference(nextPaymentReference);
-            if (isSuccess && nextReference) {
-              saveBookingToLocalStorage(nextReference, nextPaymentReference);
+
+            // Build the booking payload
+            const selectedServices = Object.entries(services)
+              .filter(([, isSelected]) => Boolean(isSelected))
+              .map(([serviceName]) => serviceName);
+
+            const selectedAddons = Object.entries(addons)
+              .filter(([, quantity]) => Number(quantity) > 0)
+              .map(([addonName, quantity]) => ({ name: addonName, quantity }));
+
+            const routeAddresses = getRouteAddresses(collectionInfo.option);
+
+            const payload = {
+              reference_number: nextReference,
+              collection_option: collectionInfo.option || "dropOffPickUpLater",
+              service_details: {
+                services,
+                selectedServices,
+                addons,
+                selectedAddons,
+                weight,
+              },
+              collection_details: {
+                option: collectionInfo.option || "dropOffPickUpLater",
+                optionLabel: collectionInfo.optionLabel || "Drop-off & Pick up later",
+                collectionDate: collectionInfo.date || "",
+                collectionTime: collectionInfo.time || "",
+                deliveryDate: deliveryInfo.date || "",
+                deliveryTime: deliveryInfo.time || "",
+                pickupAddress: routeAddresses.pickupAddress,
+                deliveryAddress: routeAddresses.deliveryAddress,
+              },
+              payment_details: {
+                method: paymentMethod === "gcash" ? "GCash" : "Cash",
+                referenceNumber: paymentMethod === "gcash" ? "" : "-",
+                status: paymentMethod === "gcash" ? "For confirmation" : "Pay on collection",
+              },
+              notes: notes || "",
+            };
+
+            try {
+              const { data: { session } } = await supabase.auth.getSession();
+              const token = session?.access_token;
+
+              const response = await fetch("http://localhost:5000/api/v1/customer/book", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                },
+                body: JSON.stringify(payload),
+              });
+
+              if (response.ok) {
+                const result = await response.json();
+                const ref = result.booking?.reference_number || nextReference;
+                 setBookingStatus("success");
+                 setReferenceNumber(ref);
+                 setPaymentReference(nextPaymentReference);
+               } else {
+                const errData = await response.json().catch(() => ({}));
+                console.error("Booking failed:", errData.error || response.statusText);
+                setBookingStatus("error");
+                setReferenceNumber("");
+                setPaymentReference("");
+              }
+            } catch (err) {
+              console.error("Booking request error:", err);
+              setBookingStatus("error");
+              setReferenceNumber("");
+              setPaymentReference("");
             }
+
             setIsSuccessOpen(true);
           }}
           className="px-4 py-2 rounded text-white bg-[#4bad40]"
@@ -1140,17 +1129,16 @@ function StepReview({
             ) : null}
             <button
               onClick={() => {
-                if (bookingStatus === "success") {
-                  const amountToPay = getAmountToPayFromStorage(referenceNumber);
-                  navigate("/payment", {
-                    state: {
-                      bookingReference: referenceNumber,
-                      paymentReference,
-                      amountToPay,
-                    },
-                  });
-                  return;
-                }
+                 if (bookingStatus === "success") {
+                   navigate("/payment", {
+                     state: {
+                       bookingReference: referenceNumber,
+                       paymentReference,
+                       amountToPay: 0, // New bookings start with 0 amount to pay until admin sets it
+                     },
+                   });
+                   return;
+                 }
                 setIsSuccessOpen(false);
               }}
               className="mt-4 w-full rounded-lg bg-[#4bad40] py-2 text-white"

@@ -160,17 +160,13 @@ const getCollectionDetails = (booking) => ({
 const getPaymentDetails = (booking) => {
   const payment = booking.paymentDetails || {};
   const method = payment.method || "GCash";
-  const normalizedStatus = String(payment.status || "").toLowerCase();
-  const isVerifiedPayment =
-    normalizedStatus.includes("payment confirmed") || normalizedStatus.includes("payment flagged");
   const rawReferenceNumber = payment.referenceNumber;
   const isGcashMethod = method.toLowerCase() === "gcash";
-  const referenceNumber =
-    isGcashMethod && !isVerifiedPayment
-      ? ""
-      : isGcashMethod && (rawReferenceNumber === undefined || rawReferenceNumber === null || rawReferenceNumber === "-")
-      ? ""
-      : rawReferenceNumber || "";
+  
+  // Show reference number if it's not a placeholder and not empty
+  const referenceNumber = (rawReferenceNumber !== undefined && rawReferenceNumber !== null && rawReferenceNumber !== "-")
+      ? rawReferenceNumber
+      : "";
 
   return {
     method,
