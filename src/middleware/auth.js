@@ -14,18 +14,16 @@ const requireAuth = async (req, res, next) => {
     next();
 };
 
-const verifyRole = (allowedRole) => {
+const verifyRole = (allowedRoles) => {
     return async (req, res, next) => {
-        const token = req.headers.authorization?.split(' ')[1]; // Get token from Frontend
+        const token = req.headers.authorization?.split(' ')[1];
 
         if (!token) return res.status(401).json({ error: 'No token provided' });
 
-        // Ask Supabase who this token belongs to
         const { data: { user }, error } = await supabase.auth.getUser(token);
 
         if (error || !user) return res.status(401).json({ error: 'Unauthorized' });
 
-        // Check the user's role in the 'profiles' table
         const { data: profile, error: profileError } = await supabase
             .from('profiles')
             .select('role')
@@ -37,7 +35,12 @@ const verifyRole = (allowedRole) => {
             return res.status(403).json({ error: 'Access denied: Could not verify role' });
         }
 
-        if (profile.role !== allowedRole && profile.role !== 'Admin') {
+        const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
+
+        // Admin always has access, or if the user's role is in the allowed list
+        const hasAccess = profile.role === 'Admin' || roles.includes(profile.role);
+
+        if (!hasAccess) {
             return res.status(403).json({ error: 'Access denied: Insufficient permissions' });
         }
 

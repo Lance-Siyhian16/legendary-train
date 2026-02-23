@@ -154,7 +154,7 @@ router.delete('/users/:id', verifyRole('Admin'), async (req, res) => {
 // ─── Bookings Management Routes ────────────────────────────────────────────────
 
 // Route: Get all bookings (with customer name from profiles)
-router.get('/bookings', verifyRole('Admin'), async (req, res) => {
+router.get('/bookings', verifyRole(['Admin', 'Staff']), async (req, res) => {
     try {
         const { data: bookings, error } = await supabase
             .from('bookings')
@@ -202,7 +202,7 @@ router.get('/bookings', verifyRole('Admin'), async (req, res) => {
 });
 
 // Route: Update booking status (when admin clicks action buttons)
-router.put('/bookings/:id/status', verifyRole('Admin'), async (req, res) => {
+router.put('/bookings/:id/status', verifyRole(['Admin', 'Staff']), async (req, res) => {
     const { id } = req.params;
     const { status, nextStage, timeline } = req.body;
 
@@ -254,7 +254,7 @@ router.put('/bookings/:id/status', verifyRole('Admin'), async (req, res) => {
 });
 
 // Route: Save amount to pay for a booking
-router.put('/bookings/:id/amount', verifyRole('Admin'), async (req, res) => {
+router.put('/bookings/:id/amount', verifyRole(['Admin', 'Staff']), async (req, res) => {
     const { id } = req.params;
     const { amountToPay } = req.body;
 
